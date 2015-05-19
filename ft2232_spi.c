@@ -91,8 +91,9 @@ const struct dev_entry devs_ft2232spi[] = {
  *  value: 0x08  CS=high, DI=low, DO=low, SK=low
  *    dir: 0x0b  CS=output, DI=input, DO=output, SK=output
  */
-static uint8_t cs_bits = 0x08;
-static uint8_t pindir = 0x0b;
+static uint16_t cs_bits = 0x78;
+static uint16_t pindir = 0x7b;
+int set_bits_high = 0;
 static struct ftdi_context ftdic_context;
 
 static const char *get_ft2232_devicename(int ft2232_vid, int ft2232_type)
@@ -193,7 +194,10 @@ int ft2232_spi_init(void)
 	if (arg) {
 		if (!strcasecmp(arg, "2232H")) {
 			ft2232_type = FTDI_FT2232H_PID;
-			channel_count = 2;
+			channel_count = 1;
+			set_bits_high = 1;
+			cs_bits = 0x8038;
+			pindir = 0xb0fb;
 		} else if (!strcasecmp(arg, "4232H")) {
 			ft2232_type = FTDI_FT4232H_PID;
 			channel_count = 4;
@@ -390,13 +394,24 @@ int ft2232_spi_init(void)
 		goto ftdi_err;
 	}
 
-	msg_pdbg("Set data bits\n");
+	msg_pdbg("Set data bits low\n");
 	buf[0] = SET_BITS_LOW;
-	buf[1] = cs_bits;
-	buf[2] = pindir;
+	buf[1] = (uint8_t)cs_bits;
+	buf[2] = (uint8_t)pindir;
 	if (send_buf(ftdic, buf, 3)) {
 		ret = -8;
 		goto ftdi_err;
+	}
+
+	if (set_bits_high) {
+		msg_pdbg("Set data bits\n");
+		buf[0] = SET_BITS_HIGH;
+		buf[1] = (uint8_t)(cs_bits >> 8);
+		buf[2] = (uint8_t)(pindir >> 8);
+		if (send_buf(ftdic, buf, 3)) {
+			ret = -9;
+			goto ftdi_err;
+		}
 	}
 
 	register_spi_master(&spi_master_ft2232);
@@ -447,7 +462,7 @@ static int ft2232_spi_send_command(struct flashctx *flash,
 	 */
 	msg_pspew("Assert CS#\n");
 	buf[i++] = SET_BITS_LOW;
-	buf[i++] = 0 & ~cs_bits; /* assertive */
+	buf[i++] = 0 & ~((uint8_t)cs_bits); /* assertive */
 	buf[i++] = pindir;
 
 	if (writecnt) {
@@ -488,8 +503,8 @@ static int ft2232_spi_send_command(struct flashctx *flash,
 
 	msg_pspew("De-assert CS#\n");
 	buf[i++] = SET_BITS_LOW;
-	buf[i++] = cs_bits;
-	buf[i++] = pindir;
+	buf[i++] = (uint8_t)cs_bits;
+	buf[i++] = (uint8_t)pindir;
 	ret = send_buf(ftdic, buf, i);
 	failed |= ret;
 	if (ret)
