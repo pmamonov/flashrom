@@ -1255,30 +1255,30 @@ int read_buf_from_file(unsigned char *buf, unsigned long size,
 
 	if ((image = fopen(filename, "rb")) == NULL) {
 		msg_gerr("Error: opening file \"%s\" failed: %s\n", filename, strerror(errno));
-		return 1;
+		return -1;
 	}
 	if (fstat(fileno(image), &image_stat) != 0) {
 		msg_gerr("Error: getting metadata of file \"%s\" failed: %s\n", filename, strerror(errno));
 		fclose(image);
-		return 1;
+		return -1;
 	}
-	if (image_stat.st_size != size) {
+	if (image_stat.st_size > size) {
 		msg_gerr("Error: Image size (%jd B) doesn't match the flash chip's size (%lu B)!\n",
 			 (intmax_t)image_stat.st_size, size);
-		fclose(image);
-		return 1;
+		return -1;
 	}
+	size = image_stat.st_size;
 	numbytes = fread(buf, 1, size, image);
 	if (fclose(image)) {
 		msg_gerr("Error: closing file \"%s\" failed: %s\n", filename, strerror(errno));
-		return 1;
+		return -1;
 	}
 	if (numbytes != size) {
 		msg_gerr("Error: Failed to read complete file. Got %ld bytes, "
 			 "wanted %ld!\n", numbytes, size);
-		return 1;
+		return -1;
 	}
-	return 0;
+	return size;
 #endif
 }
 
@@ -1481,7 +1481,10 @@ static int walk_eraseregions(struct flashctx *flash, int erasefunction,
 		 * members so the loop below won't be executed for them.
 		 */
 		len = eraser.eraseblocks[i].size;
-		for (j = 0; j < eraser.eraseblocks[i].count; j++) {
+		for (j = 0;
+		     j < eraser.eraseblocks[i].count && 
+		     start + len <= flash->chip->total_size * 1024;
+		     j++) {
 			/* Print this for every block except the first one. */
 			if (i || j)
 				msg_cdbg(", ");
@@ -1988,11 +1991,12 @@ int doit(struct flashctx *flash, int force, const char *filename, int read_it,
 	}
 
 	if (write_it || verify_it) {
-		if (read_buf_from_file(newcontents, size, filename)) {
+		size = read_buf_from_file(newcontents, size, filename);
+		if (size < 0) {
 			ret = 1;
 			goto out;
 		}
-
+		flash->chip->total_size = size / 1024; /* FIXME */
 #if CONFIG_INTERNAL == 1
 		if (programmer == PROGRAMMER_INTERNAL && cb_check_image(newcontents, size) < 0) {
 			if (force_boardmismatch) {
